@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "functions": {
+    "api/getkey.py": {
+      "runtime": "python3.9"
+    }
+  },
+  "routes": [
+    { "src": "/api/getkey", "dest": "api/getkey.py" }
+  ]
+}
