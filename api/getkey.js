@@ -6,35 +6,27 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
-  // Cho phép CORS để frontend gọi API được
   res.setHeader("Access-Control-Allow-Origin", "*");
 
-  // Chỉ xử lý GET
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
-    // Lấy một key chưa dùng
     const { data, error } = await supabase
       .from('keys')
       .select('id, key')
       .eq('used', false)
-      .limit(1);
+      .limit(1)
+      .maybeSingle();
 
-    if (error || !data || data.length === 0) {
+    if (error || !data) {
       return res.status(404).json({ error: 'No keys left' });
     }
 
-    const { id, key } = data[0];
+    await supabase
+      .from('keys')
+      .update({ used: true })
+      .eq('id', data.id);
 
-    // Đánh dấu là đã dùng
-    await supabase.from('keys').update({ used: true }).eq('id', id);
-
-    // Trả key cho client
-    return res.status(200).json({ key });
-
+    return res.status(200).json({ key: data.key });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
