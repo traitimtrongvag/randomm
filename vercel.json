@@ -6,4 +6,5 @@
   "routes": [
     { "src": "/api/getkey", "dest": "api/getkey.js" }
   ]
+res.setHeader("Access-Control-Allow-Origin", "*");
 }
