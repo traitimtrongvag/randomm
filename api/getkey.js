@@ -5,4 +5,5 @@ export default function handler(req, res) {
   const key = `Phucan_${random}`;
   res.setHeader("Content-Type", "application/json");
   res.status(200).json({ key });
+res.setHeader("Access-Control-Allow-Origin", "*");
 }
