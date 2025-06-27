@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lấy Key</title>
+</head>
+<body>
+  <h1>Key của bạn:</h1>
+  <div id="key">Đang tải...</div>
+
+  <script>
+    fetch("https://randomm-key.vercel.app/api/getkey")
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById("key").innerText = data.key || "Không có key!";
+      })
+      .catch(() => {
+        document.getElementById("key").innerText = "Lỗi khi kết nối!";
+      });
+  </script>
+</body>
+</html>
