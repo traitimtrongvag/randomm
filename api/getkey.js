@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // 👣 Lấy IP thật (hỗ trợ proxy/CDN)
+  // 👣 Lấy IP thật
   const ip =
     req.headers['x-forwarded-for']?.split(',')[0] ||
     req.connection?.remoteAddress ||
@@ -22,15 +22,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Cannot detect IP" });
   }
 
-  // 🧠 1. Kiểm tra xem IP đã nhận key chưa
+  // 🧠 1. Kiểm tra xem IP đã nhận key trong 24h chưa
   const { data: existing, error: checkErr } = await supabase
     .from('key_logs')
-    .select('key')
+    .select('key, created_at')
     .eq('ip', ip)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  if (existing) {
-    return res.status(200).json({ key: existing.key });
+  if (existing && existing.created_at) {
+    const lastTime = new Date(existing.created_at);
+    const now = new Date();
+    const hoursDiff = (now - lastTime) / (1000 * 60 * 60);
+
+    if (hoursDiff < 24) {
+      return res.status(200).json({ key: existing.key });
+    }
   }
 
   // 🗝️ 2. Lấy 1 key chưa dùng
@@ -54,7 +62,10 @@ export default async function handler(req, res) {
   // 📝 4. Lưu log với IP
   await supabase
     .from('key_logs')
-    .insert({ ip, key: keyData.key });
+    .insert({
+      ip,
+      key: keyData.key
+    });
 
   return res.status(200).json({ key: keyData.key });
 }
