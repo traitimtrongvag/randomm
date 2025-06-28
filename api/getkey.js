@@ -12,35 +12,31 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // 👣 Lấy IP từ proxy hoặc trực tiếp
-  const ip =
-    req.headers['x-forwarded-for']?.split(',')[0] ||
-    req.connection?.remoteAddress ||
-    'unknown';
+  // 👉 Lấy IP thật
+  const realIP = req.headers["x-forwarded-for"]?.split(",")[0]?.trim();
 
-  if (ip === 'unknown') {
-    return res.status(400).json({ error: "Không thể xác định IP" });
+  if (!realIP || realIP === "127.0.0.1" || realIP.startsWith("::1")) {
+    return res.status(400).json({ error: "Không xác định được IP thật." });
   }
 
-  // 🛡️ Kiểm tra IP có phải VPN hay Proxy không
+  // 🔒 Chặn VPN/proxy
   try {
-    const checkRes = await fetch(`https://ipqualityscore.com/api/json/ip/pGsAvqXDcgWmYAz4EWww5dCN4QbJ4gnC/${ip}`);
-    const checkData = await checkRes.json();
+    const vpnRes = await fetch(`https://ipqualityscore.com/api/json/ip/pGsAvqXDcgWmYAz4EWww5dCN4QbJ4gnC/${realIP}`);
+    const vpnData = await vpnRes.json();
 
-    if (checkData.vpn || checkData.proxy || checkData.tor) {
-      return res.status(403).json({ error: "IP của bạn bị chặn do dùng VPN hoặc Proxy." });
+    if (vpnData.vpn || vpnData.proxy || vpnData.tor) {
+      return res.status(403).json({ error: "VPN/Proxy bị chặn." });
     }
-  } catch (err) {
-    console.error("Lỗi kiểm tra VPN:", err);
-    // Có thể bỏ qua nếu IPQS lỗi, hoặc chặn luôn tùy bạn
-    return res.status(500).json({ error: "Không thể kiểm tra IP." });
+  } catch (e) {
+    console.error("Lỗi kiểm tra VPN:", e);
+    return res.status(500).json({ error: "Lỗi khi kiểm tra VPN." });
   }
 
-  // 🧠 Kiểm tra nếu IP đã nhận key trong 24h
+  // 📅 Kiểm tra log IP trong 24h
   const { data: existing } = await supabase
     .from('key_logs')
     .select('key, created_at')
-    .eq('ip', ip)
+    .eq('ip', realIP)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -54,7 +50,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // 🗝️ Lấy key chưa dùng
+  // 🗝️ Lấy 1 key chưa dùng
   const { data: keyData } = await supabase
     .from('keys')
     .select('id, key')
@@ -63,7 +59,7 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (!keyData) {
-    return res.status(404).json({ error: "Hết key" });
+    return res.status(404).json({ error: "Hết key." });
   }
 
   // ✅ Đánh dấu key đã dùng
@@ -72,10 +68,10 @@ export default async function handler(req, res) {
     .update({ used: true })
     .eq('id', keyData.id);
 
-  // 📝 Lưu log
+  // 📥 Ghi log IP
   await supabase
     .from('key_logs')
-    .insert({ ip, key: keyData.key });
+    .insert({ ip: realIP, key: keyData.key });
 
   return res.status(200).json({ key: keyData.key });
 }
