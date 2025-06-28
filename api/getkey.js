@@ -12,18 +12,32 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // 👣 Lấy IP thật
+  // 👣 Lấy IP từ proxy hoặc trực tiếp
   const ip =
     req.headers['x-forwarded-for']?.split(',')[0] ||
     req.connection?.remoteAddress ||
     'unknown';
 
   if (ip === 'unknown') {
-    return res.status(400).json({ error: "Cannot detect IP" });
+    return res.status(400).json({ error: "Không thể xác định IP" });
   }
 
-  // 🧠 1. Kiểm tra xem IP đã nhận key trong 24h chưa
-  const { data: existing, error: checkErr } = await supabase
+  // 🛡️ Kiểm tra IP có phải VPN hay Proxy không
+  try {
+    const checkRes = await fetch(`https://ipqualityscore.com/api/json/ip/pGsAvqXDcgWmYAz4EWww5dCN4QbJ4gnC/${ip}`);
+    const checkData = await checkRes.json();
+
+    if (checkData.vpn || checkData.proxy || checkData.tor) {
+      return res.status(403).json({ error: "IP của bạn bị chặn do dùng VPN hoặc Proxy." });
+    }
+  } catch (err) {
+    console.error("Lỗi kiểm tra VPN:", err);
+    // Có thể bỏ qua nếu IPQS lỗi, hoặc chặn luôn tùy bạn
+    return res.status(500).json({ error: "Không thể kiểm tra IP." });
+  }
+
+  // 🧠 Kiểm tra nếu IP đã nhận key trong 24h
+  const { data: existing } = await supabase
     .from('key_logs')
     .select('key, created_at')
     .eq('ip', ip)
@@ -31,18 +45,17 @@ export default async function handler(req, res) {
     .limit(1)
     .maybeSingle();
 
-  if (existing && existing.created_at) {
+  if (existing) {
     const lastTime = new Date(existing.created_at);
     const now = new Date();
     const hoursDiff = (now - lastTime) / (1000 * 60 * 60);
-
     if (hoursDiff < 24) {
       return res.status(200).json({ key: existing.key });
     }
   }
 
-  // 🗝️ 2. Lấy 1 key chưa dùng
-  const { data: keyData, error: keyErr } = await supabase
+  // 🗝️ Lấy key chưa dùng
+  const { data: keyData } = await supabase
     .from('keys')
     .select('id, key')
     .eq('used', false)
@@ -50,22 +63,19 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (!keyData) {
-    return res.status(404).json({ error: "No keys left" });
+    return res.status(404).json({ error: "Hết key" });
   }
 
-  // ✅ 3. Đánh dấu key đã dùng
+  // ✅ Đánh dấu key đã dùng
   await supabase
     .from('keys')
     .update({ used: true })
     .eq('id', keyData.id);
 
-  // 📝 4. Lưu log với IP
+  // 📝 Lưu log
   await supabase
     .from('key_logs')
-    .insert({
-      ip,
-      key: keyData.key
-    });
+    .insert({ ip, key: keyData.key });
 
   return res.status(200).json({ key: keyData.key });
 }
