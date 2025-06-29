@@ -6,50 +6,52 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
-  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
 
-  // ❌ Chỉ cho phép GET
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // 🛡️ Chặn một số user-agent nguy hiểm
-  const ua = req.headers['user-agent'] || '';
-  if (/curl|wget|python|httpie|postman/i.test(ua)) {
-    return res.status(403).json({ error: "User-Agent không hợp lệ." });
-  }
-
-  // 📡 Lấy IP thật
-  const realIP =
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.headers["x-vercel-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.socket?.remoteAddress;
+  // 👉 Lấy IP thật
+  const realIP = req.headers["x-forwarded-for"]?.split(",")[0]?.trim();
 
   if (!realIP || realIP === "127.0.0.1" || realIP.startsWith("::1")) {
     return res.status(400).json({ error: "Không xác định được IP thật." });
   }
 
-  console.log("📡 IP:", realIP);
-
-  // 🔒 Kiểm tra VPN/Proxy
+  // 🔒 Chặn VPN/proxy
   try {
-    const vpnRes = await fetch(
-      `https://ipqualityscore.com/api/json/ip/pGsAvqXDcgWmYAz4EWww5dCN4QbJ4gnC/${realIP}`
-    );
+    const vpnRes = await fetch(`https://ipqualityscore.com/api/json/ip/pGsAvqXDcgWmYAz4EWww5dCN4QbJ4gnC/${realIP}`);
     const vpnData = await vpnRes.json();
-
-    console.log("🔍 VPN Check:", vpnData);
 
     if (vpnData.vpn || vpnData.proxy || vpnData.tor) {
       return res.status(403).json({ error: "VPN/Proxy bị chặn." });
     }
   } catch (e) {
-    console.error("❌ Lỗi kiểm tra VPN:", e);
+    console.error("Lỗi kiểm tra VPN:", e);
     return res.status(500).json({ error: "Lỗi khi kiểm tra VPN." });
   }
 
-  // 🕒 Kiểm tra nếu IP đã lấy key trong 24h
+  // 🎯 Tạo thông tin headers cần kiểm tra
+  const headersCheck = {
+    "user-agent": req.headers["user-agent"] || "",
+    "accept-language": req.headers["accept-language"] || "",
+  };
+
+  // ❌ Kiểm tra headers trùng IP + headers
+  const { data: duplicateHeader } = await supabase
+    .from("headers_logs")
+    .select("id")
+    .eq("ip", realIP)
+    .eq("user_agent", headersCheck["user-agent"])
+    .eq("accept_language", headersCheck["accept-language"])
+    .limit(1);
+
+  if (duplicateHeader && duplicateHeader.length > 0) {
+    return res.status(429).json({ error: "IP & headers trùng lặp – nghi ngờ fake request." });
+  }
+
+  // 🕒 Kiểm tra IP đã nhận key trong 24h chưa
   const { data: existing } = await supabase
     .from('key_logs')
     .select('key, created_at')
@@ -63,12 +65,11 @@ export default async function handler(req, res) {
     const now = new Date();
     const hoursDiff = (now - lastTime) / (1000 * 60 * 60);
     if (hoursDiff < 24) {
-      console.log("🔁 Đã cấp key trong 24h:", existing.key);
       return res.status(200).json({ key: existing.key });
     }
   }
 
-  // 🔑 Tìm key chưa dùng
+  // 🗝️ Lấy 1 key chưa dùng
   const { data: keyData } = await supabase
     .from('keys')
     .select('id, key')
@@ -86,12 +87,19 @@ export default async function handler(req, res) {
     .update({ used: true })
     .eq('id', keyData.id);
 
-  // 📝 Ghi log IP đã nhận key
+  // 📥 Ghi log IP
   await supabase
     .from('key_logs')
     .insert({ ip: realIP, key: keyData.key });
 
-  console.log("✅ Cấp key mới:", keyData.key);
+  // 📥 Ghi log headers
+  await supabase
+    .from('headers_logs')
+    .insert({
+      ip: realIP,
+      user_agent: headersCheck["user-agent"],
+      accept_language: headersCheck["accept-language"]
+    });
 
   return res.status(200).json({ key: keyData.key });
 }
